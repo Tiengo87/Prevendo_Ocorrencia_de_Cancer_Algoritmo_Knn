@@ -1,0 +1,296 @@
+---
+title: "Prevendo a Ocorrência de Câncer - Usando algoritimo Knn"
+author: "Evanil Tiengo Junior"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Descrição
+
+Este projeto é parte integrante do curso Big Data Analytics com R e Microsoft Azure da Formação Cientista de Dados. O objetivo é analisar dados reais sobre exames de câncer de mama realizado com mulheres nos EUA e então prever a ocorrência de novos casos.
+Os dados do câncer da mama incluem 569 observações de biópsias de câncer, cada um com 32 características (variáveis). 
+O diagnóstico é codiﬁcado como “M” para indicar maligno ou “B” para indicar benigno.
+Todo o projeto será descrito de acordo com suas etapas.
+
+## Objetivos
+
+O objetivo será prever a ocorrência de câncer. O modelo preditivo deve ser bastante preciso,  pois  estamos tratando de doença. 
+
+## Local de armazeanamento e pacotes instalados
+```{r}
+# Local armazenamento 
+setwd("C:/Users/evanil.tiengo/Desktop/Cursos/DSA/Big Data Analytics com R e Microsoft Azure Machine Learning/Mini-Projeto02") 
+getwd() 
+```
+
+```{r}
+# Pacotes utilizados. 
+#install.packages("class")
+library(class)
+#install.packages("caTools")
+library(caTools)
+# install.packages("gmodels")
+library(gmodels)
+#install.packages("ggplot2")
+library(ggplot2)
+#install.packages("caret")
+library(caret)
+```
+
+## Etapa 1 - Coletando os Dados
+Os dados foram fornecidos pela DSA. Sendo assim preciso realizar a carga. Antes de 
+realizar a carga do arquivo é necessário saber o formato do mesmo, que neste caso é 
+.csv! 
+
+```{r}
+Dados <- read.csv("C:/Users/evanil.tiengo/Desktop/Cursos/DSA/Big Data Analytics com R e Microsoft Azure Machine Learning/Mini-Projeto02/bc_data.csv", stringsAsFactors = FALSE)
+```
+
+## Etapa 2 - EDA (Exploratory Data Analysis) 
+
+```{r}
+# Com o comando abaixo é possível identificar as classes de cada variável 
+str(Dados)
+```
+
+Temos 569 observações (linhas) de biópsias de câncer, cada um com 32 variáveis (colunas). Uma característica é um número de identiﬁcação (ID), outro é o diagnóstico de câncer, e 30 são medidas laboratoriais numéricas. O diagnóstico é codiﬁcado como “M” para indicar maligno ou “B” para indicar benigno.
+
+
+### Exploração do dataset:
+
+Independentemente do método de aprendizagem de máquina, deve sempre ser excluídas variáveis de ID. Caso contrário, isso pode levar a resultados errados porque o ID pode ser usado para “prever” cada exemplo. Por conseguinte, um modelo que inclui um identiﬁcador que sofrem de superajuste, e é improvável que generalizar bem a outros dados.
+
+```{r}
+# Excluindo a coluna ID
+Dados <- Dados[-1]
+str(Dados)
+```
+
+```{r}
+# Identificação de NA`s e Vazios!
+any(is.na(Dados))
+any(Dados == "")
+# False significa que não existe nenhum campo com NA ou Vazio! 
+```
+
+### Analisando as variaveis:
+
+```{r}
+#$diagnosis: Muitos classificadores requerem que as variáveis sejam do tipo Fator.
+#            No nosso dataset a variavel está como caracter. Termos que converté-la
+table(Dados$diagnosis)
+Dados$diagnosis <- factor(Dados$diagnosis, levels = c("B", "M"), labels = c("Benigno", "Maligno"))
+str(Dados$diagnosis)
+
+# Verificando a proporção
+round(prop.table(table(Dados$diagnosis)) * 100, digits = 1)
+```
+Pelo dataset temos que 62.7% dos casos analisados são do tipo Benigno e 37.3% são do tipo Maligno.
+
+As demais medidas são numéricas. Elas são os resultados dos exames da biopsia, como por exemplo o raio, a textura, o perimetro, a area, a concavidade, etc...
+
+Como temos varias medidas numericas e de diferentes exames, podemos ter um problema de normalização. O propósito da normalização é minimizar os problemas oriundos do uso de unidades e dispersões distintas entre as variáveis. No nosso dataset podemos detectar esse problema de escala entre os dados. Então precisam ser normalizados!
+
+Segue abaixo 6 variaveis que demonstrarão a necessidade da normalização:
+```{r}
+summary(Dados[c("texture_mean", "perimeter_mean", "area_mean", "concavity_mean", "smoothness_se", "perimeter_worst")])
+```
+
+Iremos utilizar a normalização segundo a amplitude. O calculo de distancia pelo Knn é dependente das medidasde escala nos dados de entrada!
+```{r}
+# Criando um função de normalização
+Normalizar <- function(x) {
+                 return ((x - min(x)) / (max(x) - min(x)))
+              }
+```
+
+```{r}
+# Testando a função de normalização - os resultados devem ser idênticos
+Normalizar(c(1, 2, 3, 4, 5))
+```
+
+```{r}
+Normalizar(c(10, 20, 30, 40, 50))
+```
+Normalização ok!
+
+```{r}
+# Normalizando os dados
+Dados_Norm <- as.data.frame(lapply(Dados[2:31], Normalizar))
+```
+
+```{r}
+# Confirmando que a normalização funcionou
+summary(Dados[c("texture_mean", "perimeter_mean", "area_mean", "concavity_mean", "smoothness_se", "perimeter_worst")])
+```
+
+```{r}
+summary(Dados_Norm[c("texture_mean", "perimeter_mean", "area_mean", "concavity_mean", "smoothness_se", "perimeter_worst")])
+```
+
+Os dados foram normalizados!
+
+## Etapa 3 - Modelagem 
+
+Treinando o Modelo. Iremos usar o algoritmo Knn (K nearest neighboors) para o modelo. O Knn é o K vizinhos mais proximos. É um dos classificadores mais simples de ser implementado, de fácil compreensão e ainda hoje pode obter bons resultados dependendo de sua aplicação. A ideia principal do Knn é determinar o rótulo de classificação de uma amostra baseado nas amostras vizinhas advindas de um conjunto de treinamento.
+
+```{r}
+# Criando amostras randômicas 
+str(Dados_Norm)
+set.seed(1) 
+Amostra <- sample.split(Dados_Norm, SplitRatio = 0.70) 
+
+# Treinamos o nosso modelo nos dados de treino 
+# Dados_Treino 
+Dados_Treino <- subset(Dados_Norm, Amostra == TRUE)
+# Dados_Teste 
+Dados_Teste <- subset(Dados_Norm, Amostra == FALSE) 
+
+# Criando os labels para os dados de treino e de teste
+Dados_Treino_Labels <- subset(Dados[1:569,1], Amostra == TRUE)
+Dados_Teste_Labels <- subset(Dados[1:569,1], Amostra == FALSE)
+```
+
+```{r}
+# Criando o modelo
+Modelo_v1 <- knn(train = Dados_Treino, test = Dados_Teste, cl = Dados_Treino_Labels, 
+                 k = 10)
+
+# A função knn() retorna um objeto do tipo fator com as previsões para cada exemplo no dataset de teste
+class(Modelo_v1)
+```
+
+## Etapa 4 - Interpretando o Modelo
+
+Nesta etapa iremos analisar a performance do Modelo_v1. 
+
+```{r}
+# Criando uma tabel acruzada dos dados previstos x dados atuais
+confusionMatrix(Dados_Teste_Labels, Modelo_v1)
+```
+
+Interpretando os Resultados
+A tabela cruzada mostra 4 possíveis valores:
+A primeira coluna lista os labels originais nos dados observados
+As duas colunas do modelo (Benigno e Maligno) do modelo, mostram os resultados da previsão
+Temos:
+Cenário 1: Célula Benigno (label) x Benigno (Modelo) - 114 casos - true negative
+Cenário 2: Célula Benigno (label) x Maligno (Modelo) - 001 casos - false positive
+           (o modelo errou)
+Cenário 3: Célula Maligno (label) x Benigno (Modelo) - 004 casos - false negative 
+           (o modelo errou)
+Cenário 4: Célula Maligno (label) x Maligno (Modelo) - 052 casos - true positive
+
+Lendo a Confusion Matrix (Perspectva de ter ou não a doença):
+True Negative = nosso modelo previu que a pessoa NÃO tinha a doença e os dados mostraram que realmente a pessoa NÃO tinha a doença
+False Positive = nosso modelo previu que a pessoa tinha a doença e os dados mostraram que NÃO, a pessoa não tinha a doença
+False Negative = nosso modelo previu que a pessoa NÃO tinha a doença e os dados mostraram que SIM, a pessoa tinha a doença
+True Positive = nosso modelo previu que a pessoa tinha a doença e os dados mostraram que SIM, a pessoa tinha a doença
+
+Falso Positivo - Erro Tipo I
+Falso Negativo - Erro Tipo II
+
+## Etapa 5 - Otimização do Modelo
+
+```{r}
+# Testando diferentes valores para k
+#k=1
+Dados_Test_Pred <- knn(train = Dados_Treino, test = Dados_Teste, 
+                       cl =  Dados_Treino_Labels, k=1)
+confusionMatrix(Dados_Teste_Labels, Dados_Test_Pred)
+# Taxa Acerto = 95,32
+
+#k=12
+Dados_Test_Pred <- knn(train = Dados_Treino, test = Dados_Teste, 
+                       cl =  Dados_Treino_Labels, k=12)
+confusionMatrix(Dados_Teste_Labels, Dados_Test_Pred)
+# Taxa Acerto = 97,08
+
+#k=20
+Dados_Test_Pred <- knn(train = Dados_Treino, test = Dados_Teste, 
+                       cl =  Dados_Treino_Labels, k=20)
+confusionMatrix(Dados_Teste_Labels, Dados_Test_Pred)
+# Taxa Acerto = 97,08
+
+#k=29
+Dados_Test_Pred <- knn(train = Dados_Treino, test = Dados_Teste, 
+                       cl =  Dados_Treino_Labels, k=29)
+confusionMatrix(Dados_Teste_Labels, Dados_Test_Pred)
+# Taxa Acerto = 95,91
+
+#k=36
+Dados_Test_Pred <- knn(train = Dados_Treino, test = Dados_Teste, 
+                       cl =  Dados_Treino_Labels, k=36)
+confusionMatrix(Dados_Teste_Labels, Dados_Test_Pred)
+# Taxa Acerto = 95,91
+
+#k=50
+Dados_Test_Pred <- knn(train = Dados_Treino, test = Dados_Teste, 
+                       cl =  Dados_Treino_Labels, k=50)
+confusionMatrix(Dados_Teste_Labels, Dados_Test_Pred)
+# Taxa Acerto = 95,91
+```
+
+## Etapa 6 - Calculando a Taxa de Erro
+```{r}
+## Calculando a taxa de erro
+Prev = NULL
+Taxa_Acerto = NULL
+
+suppressWarnings(for(i in 1:50) 
+                    {
+                     set.seed(1) 
+                     Prev = knn(train = Dados_Treino, test = Dados_Teste,  
+                                cl = Dados_Treino_Labels, k = i)
+                     CT = CrossTable(x = Dados_Teste_Labels, y = Prev,    
+                                     prop.chisq=FALSE)
+                     Taxa_Acerto[i] <- ((CT$t[1] + CT$t[4]) / sum(CT$t))*100
+                     })
+# Obtendo os valores de k e das taxas de erro
+K.Values <- 1:50
+Df_Acerto <- data.frame(Taxa_Acerto, K.Values)
+Df_Acerto
+```
+
+```{r}
+# Grafico
+ggplot(Df_Acerto, aes(x = K.Values, y = Taxa_Acerto)) + geom_point()+ geom_line(lty = "dotted", color = 'red')
+```
+
+O k=7 foi o que apresentou melhor taxa de acerto
+
+```{r}
+max(Df_Acerto)
+```
+
+
+```{r}
+Dados_Test_Pred <- knn(train = Dados_Treino, test = Dados_Teste, 
+                       cl = Dados_Treino_Labels, k=7)
+confusionMatrix(Dados_Teste_Labels, Dados_Test_Pred)
+```
+
+## Conclusão
+
+Concluimos que com K=7 temos uma Accuracy de 98,25%, ou seja, erramos 1,75% das previssões. Como a área da saude não podemos ter erros o ideal é atingir a menor taxa de erro possivel. Analisando a nossa matriz temos:
+
+Cenário 1: Célula Benigno (label) x Benigno (Modelo) - 115 casos - true negative
+Cenário 2: Célula Benigno (label) x Maligno (Modelo) - 000 casos - false positive
+           (o modelo errou)
+Cenário 3: Célula Maligno (label) x Benigno (Modelo) - 003 casos - false negative 
+           (o modelo errou)
+Cenário 4: Célula Maligno (label) x Maligno (Modelo) - 053 casos - true positive
+
+Lendo a Confusion Matrix (Perspectva de ter ou não a doença):
+True Negative = nosso modelo previu que a pessoa NÃO tinha a doença e os dados mostraram que realmente a pessoa NÃO tinha a doença
+False Positive = nosso modelo previu que a pessoa tinha a doença e os dados mostraram que NÃO, a pessoa não tinha a doença
+False Negative = nosso modelo previu que a pessoa NÃO tinha a doença e os dados mostraram que SIM, a pessoa tinha a doença
+True Positive = nosso modelo previu que a pessoa tinha a doença e os dados mostraram que SIM, a pessoa tinha a doença
+
+Ficamos com 3 casos que nosso modelo previu que a pessoa não tinha a doença e na verdade ela tinha. Para melhorar o resultado precisamos treinar o modelo com mais casos para assim melhrar ainda mais a taxa de acerto. 
+
+
+
